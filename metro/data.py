@@ -18,6 +18,7 @@ import argparse
 import datetime
 import os
 import requests
+import time
 
 import psycopg2
 import yaml
@@ -133,12 +134,16 @@ class TrainPositions(WmataScraper, PostgresPublisher):
                 )
 
 
-def main(fcredentials):
+def run(fcredentials):
     with open(fcredentials, 'r') as f:
         dsnargs = yaml.load(f)
     api_key = dsnargs.pop('api_key')
     tp = TrainPositions(api_key=api_key, dsnargs=dsnargs)
-    tp.publish(tp.get())
+
+    logger.info('starting to poll')
+    while True:
+        time.sleep(10)
+        tp.publish(tp.get())
 
 
 if __name__ == '__main__':
@@ -147,4 +152,4 @@ if __name__ == '__main__':
         '-f', '--fcredentials', help='path to credentials file', required=True
     )
     args = parser.parse_args()
-    main(fcredentials=args.fcredentials)
+    run(fcredentials=args.fcredentials)
