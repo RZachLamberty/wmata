@@ -143,7 +143,10 @@ def run(fcredentials):
     logger.info('starting to poll')
     while True:
         time.sleep(10)
-        tp.publish(tp.get())
+        try:
+            tp.publish(tp.get())
+        except Exception as e:
+            logger.exception(e)
 
 
 if __name__ == '__main__':
