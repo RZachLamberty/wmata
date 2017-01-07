@@ -31,14 +31,51 @@ import eri.logging as logging
 # ----------------------------- #
 
 URL_BASE = 'https://api.wmata.com/'
-URL_TRAIN_POSITIONS = '{}TrainPositions/TrainPositions'.format(URL_BASE)
+URLS = {
+    'TrainPositions': 'TrainPositions/TrainPositions',
+    'StandardRoutes': 'TrainPositions/StandardRoutes',
+    'Lines': 'Rail.svc/json/jLines',
+    'StationInformation': 'Rail.svc/json/jStations',
+    'StationToStationInformation': 'Rail.svc/json/jSrcStationToDstStationInfo',
+}
+URLS = {k: '{}{}'.format(URL_BASE, v) for (k, v) in URLS.items()}
 
-INSERT_TRAIN_POS = """INSERT INTO
-    {tblname:}
+INSERT_SQL = {}
+INSERT_SQL['TrainPositions'] = """INSERT INTO
+    train_positions
 VALUES (
     %(CarCount)s, %(CircuitId)s, %(DestinationStationCode)s, %(DirectionNum)s,
     %(LineCode)s, %(SecondsAtLocation)s, %(ServiceType)s, %(TrainId)s,
     %(TimeStamp)s
+)
+"""
+INSERT_SQL['StandardRoutes'] = """INSERT INTO
+    standard_routes
+VALUES (
+    %(LineCode)s, %(CircuitId)s, %(SeqNum)s, %(StationCode)s, %(TrackNum)s,
+    %(TimeStamp)s
+)
+"""
+INSERT_SQL['Lines'] = """INSERT INTO
+    lines
+VALUES (
+    %(DisplayName)s, %(EndStationCode)s, %(InternalDestination1)s,
+    %(InternalDestination2)s, %(LineCode)s, %(StartStationCode)s, %(TimeStamp)s
+)
+"""
+INSERT_SQL['StationInformation'] = """INSERT INTO
+    station_information
+VALUES (
+    %(City)s, %(Code)s, %(Lat)s, %(LineCode1)s, %(LineCode2)s, %(LineCode3)s,
+    %(LineCode4)s, %(Lon)s, %(Name)s, %(State)s, %(StationTogether1)s,
+    %(StationTogether2)s, %(Street)s, %(Zip)s, %(TimeStamp)s
+)
+"""
+INSERT_SQL['StationToStationInformation'] = """INSERT INTO
+    station_to_station_information
+VALUES (
+    %(CompositeMiles)s, %(DestinationStation)s, %(OffPeakTime)s, %(PeakTime)s,
+    %(RailTime)s, %(SeniorDisabled)s, %(SourceStation)s, %(TimeStamp)s
 )
 """
 
@@ -59,6 +96,11 @@ class WmataScraper(object):
     responses to the database in some way
 
     """
+    def __init__(self, api_key, url, contentType='json'):
+        self.params = {'contentType': contentType}
+        self.headers = {'api_key': api_key}
+        self.url = url
+
     def get(self, *args, **kwargs):
         raise NotImplementedError
 
@@ -68,11 +110,17 @@ class WmataScraper(object):
 
 class PostgresPublisher(object):
     """mixin for publishing to local postgres database"""
-    def __init__(self, **dsnargs):
+    def __init__(self, dsnargs=None):
         """all arguments are passed through *directly* to a psycopg2 connect
-        function, so see that function for full documentation
+        function, so see that function for full documentation. dsnargs should be
+        a dictionary
 
         """
+        if dsnargs is None:
+            raise WmataParseError(
+                "you must supply either a connection string (pgargs) or "
+                "connection parameters (pgkwargs)"
+            )
         self.dsnargs = dsnargs
 
     def connect(self):
@@ -85,27 +133,18 @@ class TrainPositions(WmataScraper, PostgresPublisher):
     persistence (postgres assumed)
 
     """
-    def __init__(self, api_key, url=URL_TRAIN_POSITIONS, dsnargs=None):
-        self.params = {'contentType': 'json'}
-        self.headers = {'api_key': api_key}
-        self.url = url
-
-        # make db connection, passthrough is super awkard. Maybe I should go
-        # back to yaml credentials?
-        if dsnargs is None:
-            raise WmataParseError(
-                "you must supply either a connection string (pgargs) or "
-                "connection parameters (pgkwargs)"
-            )
-        PostgresPublisher.__init__(self, **dsnargs)
+    def __init__(self, api_key, url=URLS['TrainPositions'], contenttype='json',
+                 dsnargs=None):
+        WmataScraper.__init__(
+            self, api_key=api_key, url=url, contentType=contentType
+        )
+        PostgresPublisher.__init__(self, dsnargs)
 
     def get(self):
         """simple wrapper to the wmata api train positions end point
 
         args:
-            api_key (str): wmata api key
-            url (str): url for the wmata api endpoint (default:
-                metro.data.URL_TRAIN_POSTITIONS)
+            None
 
         returns:
             tp (dict): requests library parsed json response from api
@@ -124,13 +163,196 @@ class TrainPositions(WmataScraper, PostgresPublisher):
             row['TimeStamp'] = now
         return j
 
-    def publish(self, j, tblname='train_positions'):
+    def publish(self, j):
         """publish a given api response to postgres"""
         with self.connect() as con:
             with con.cursor() as cur:
                 cur.executemany(
-                    INSERT_TRAIN_POS.format(tblname=tblname),
-                    j['TrainPositions']
+                    INSERT_SQL['TrainPositions'], j['TrainPositions']
+                )
+
+
+class StandardRoutes(WmataScraper, PostgresPublisher):
+    """we only need to do this once, basically. This information is changed
+    infrequently (per the wmata api docs, at least)
+
+    """
+    def __init__(self, api_key, url=URLS['StandardRoutes'], contentType='json',
+                 dsnargs=None):
+        WmataScraper.__init__(
+            self, api_key=api_key, url=url, contentType=contentType
+        )
+        PostgresPublisher.__init__(self, dsnargs)
+
+    def get(self):
+        """simple wrapper to the wmata api standard routes end point
+
+        args:
+            None
+
+        returns:
+            tp (dict): requests library parsed json response from api
+
+        raises:
+            standard requests library errors
+
+        """
+        now = datetime.datetime.now()
+        j = requests.get(
+            url=self.url,
+            params=self.params,
+            headers=self.headers
+        ).json()
+        # yes we're denormalizing no I don't care no you shut up
+        jout = {'StandardRoutes': []}
+        for revline in j['StandardRoutes']:
+            for circuitdict in revline['TrackCircuits']:
+                x = circuitdict.copy()
+                x['LineCode'] = revline['LineCode']
+                x['TrackNum'] = revline['TrackNum']
+                x['TimeStamp'] = now
+                jout['StandardRoutes'].append(x)
+        return jout
+
+    def publish(self, j):
+        """publish a given api response to postgres"""
+        with self.connect() as con:
+            with con.cursor() as cur:
+                cur.executemany(
+                    INSERT_SQL['StandardRoutes'], j['StandardRoutes']
+                )
+
+
+class Lines(WmataScraper, PostgresPublisher):
+    """we only need to do this once, basically. This information is changed
+    infrequently (per the wmata api docs, at least)
+
+    """
+    def __init__(self, api_key, url=URLS['Lines'], contentType='json',
+                 dsnargs=None):
+        WmataScraper.__init__(
+            self, api_key=api_key, url=url, contentType=contentType
+        )
+        PostgresPublisher.__init__(self, dsnargs)
+
+    def get(self):
+        """simple wrapper to the wmata api standard routes end point
+
+        args:
+            None
+
+        returns:
+            tp (dict): requests library parsed json response from api
+
+        raises:
+            standard requests library errors
+
+        """
+        now = datetime.datetime.now()
+        j = requests.get(
+            url=self.url,
+            params=self.params,
+            headers=self.headers
+        ).json()
+        for row in j['Lines']:
+            row['TimeStamp'] = now
+        return j
+
+    def publish(self, j):
+        """publish a given api response to postgres"""
+        with self.connect() as con:
+            with con.cursor() as cur:
+                cur.executemany(INSERT_SQL['Lines'], j['Lines'])
+
+
+class StationInformation(WmataScraper, PostgresPublisher):
+    """we only need to do this once, basically. This information is changed
+    infrequently (per the wmata api docs, at least)
+
+    """
+    def __init__(self, api_key, url=URLS['StationInformation'],
+                 contentType='json', dsnargs=None):
+        WmataScraper.__init__(
+            self, api_key=api_key, url=url, contentType=contentType
+        )
+        PostgresPublisher.__init__(self, dsnargs)
+
+    def get(self):
+        """simple wrapper to the wmata api station list end point
+
+        args:
+            None
+
+        returns:
+            tp (dict): requests library parsed json response from api
+
+        raises:
+            standard requests library errors
+
+        """
+        now = datetime.datetime.now()
+        j = requests.get(
+            url=self.url,
+            params=self.params,
+            headers=self.headers
+        ).json()
+        for row in j['Stations']:
+            row.update(row.pop('Address'))
+            row['TimeStamp'] = now
+        return j
+
+    def publish(self, j):
+        """publish a given api response to postgres"""
+        with self.connect() as con:
+            with con.cursor() as cur:
+                cur.executemany(
+                    INSERT_SQL['StationInformation'], j['Stations']
+                )
+
+
+class StationToStationInformation(WmataScraper, PostgresPublisher):
+    """we only need to do this once, basically. This information is changed
+    infrequently (per the wmata api docs, at least)
+
+    """
+    def __init__(self, api_key, url=URLS['StationToStationInformation'],
+                 contentType='json', dsnargs=None):
+        WmataScraper.__init__(
+            self, api_key=api_key, url=url, contentType=contentType
+        )
+        PostgresPublisher.__init__(self, dsnargs)
+
+    def get(self):
+        """simple wrapper to the wmata api station list end point
+
+        args:
+            None
+
+        returns:
+            tp (dict): requests library parsed json response from api
+
+        raises:
+            standard requests library errors
+
+        """
+        now = datetime.datetime.now()
+        j = requests.get(
+            url=self.url,
+            params=self.params,
+            headers=self.headers
+        ).json()
+        for row in j['StationToStationInfos']:
+            row.update(row.pop('RailFare'))
+            row['TimeStamp'] = now
+        return j
+
+    def publish(self, j):
+        """publish a given api response to postgres"""
+        with self.connect() as con:
+            with con.cursor() as cur:
+                cur.executemany(
+                    INSERT_SQL['StationToStationInformation'],
+                    j['StationToStationInfos']
                 )
 
 

@@ -42,3 +42,87 @@ COMMIT;
 BEGIN;
   GRANT ALL PRIVILEGES ON TABLE "train_positions" TO wmata;
 COMMIT;
+
+
+-- same with the standard routes table
+BEGIN;
+  CREATE TABLE standard_routes (
+    LineCode text
+    , CircuitId real
+    , SeqNum real
+    , StationCode text
+    , TrackNum real
+    , TimeStamp timestamp
+  );
+COMMIT;
+
+-- Make sure priveleges are sufficient for user
+BEGIN;
+  GRANT ALL PRIVILEGES ON TABLE "standard_routes" TO wmata;
+COMMIT;
+
+
+-- same with the lines table
+BEGIN;
+  CREATE TABLE lines (
+    DisplayName text
+    , EndStationCode text
+    , InternalDestination1 text
+    , InternalDestination2 text
+    , LineCode text
+    , StartStationCode text
+    , TimeStamp timestamp
+  );
+COMMIT;
+
+-- Make sure priveleges are sufficient for user
+BEGIN;
+  GRANT ALL PRIVILEGES ON TABLE "lines" TO wmata;
+  COMMIT;
+
+
+-- same with the station_information table
+BEGIN;
+  CREATE TABLE station_information (
+    City text
+    , Code text
+    , Lat real
+    , LineCode1 text
+    , LineCode2 text
+    , LineCode3 text
+    , LineCode4 text
+    , Lon real
+    , Name text
+    , State text
+    , StationTogether1 text
+    , StationTogether2 text
+    , Street text
+    , Zip text
+    , TimeStamp timestamp
+  );
+COMMIT;
+
+-- Make sure priveleges are sufficient for user
+BEGIN;
+  GRANT ALL PRIVILEGES ON TABLE "station_information" TO wmata;
+COMMIT;
+
+
+-- same with the station_to_station_information table
+BEGIN;
+  CREATE TABLE station_to_station_information (
+    CompositeMiles real
+    , DestinationStation text
+    , OffPeakTime money
+    , PeakTime money
+    , RailTime real
+    , SeniorDisabled money
+    , SourceStation text
+    , TimeStamp timestamp
+  );
+COMMIT;
+
+-- Make sure priveleges are sufficient for user
+BEGIN;
+  GRANT ALL PRIVILEGES ON TABLE "station_to_station_information" TO wmata;
+COMMIT;
