@@ -53,7 +53,14 @@ from
             , lead(tp.timestamp) over w - tp.timestamp as time_till_next_record
             , tp.timestamp - lag(tp.timestamp) over w as time_since_last_record
         from
-            train_positions tp
+            (
+                select
+                    *
+                from
+                    train_positions
+                where
+                    linecode is not null
+            ) tp
             join
             (
                 select distinct
